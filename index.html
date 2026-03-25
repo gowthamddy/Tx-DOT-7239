@@ -13,7 +13,144 @@
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <style>
-    html, body, #map { height: 100%; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+
+    #map {
+      height: 100%;
+      display: none;
+    }
+
+    /* Password overlay */
+    #pw-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #pw-box {
+      background: #fff;
+      border-radius: 14px;
+      padding: 40px 36px;
+      width: 340px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+      text-align: center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    #pw-box h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+      color: #1a1a2e;
+    }
+
+    #pw-box p {
+      font-size: 13px;
+      color: #666;
+      margin: 0 0 22px 0;
+    }
+
+    #pw-input {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 16px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      letter-spacing: 3px;
+      text-align: center;
+      margin-bottom: 14px;
+      transition: border-color 0.2s;
+    }
+
+    #pw-input:focus { border-color: #b30000; }
+
+    #pw-input.shake {
+      animation: shake 0.4s ease;
+      border-color: #b30000;
+    }
+
+    #pw-btn {
+      width: 100%;
+      padding: 11px;
+      font-size: 15px;
+      font-weight: 600;
+      background: #b30000;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #pw-btn:hover { background: #8b0000; }
+
+    #pw-error {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #b30000;
+      min-height: 18px;
+      font-weight: 500;
+    }
+
+    #pw-attempts {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #999;
+      min-height: 16px;
+    }
+
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20% { transform: translateX(-8px); }
+      40% { transform: translateX(8px); }
+      60% { transform: translateX(-6px); }
+      80% { transform: translateX(6px); }
+    }
+
+    /* Locked overlay */
+    #locked-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #1a1a2e;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #locked-box {
+      background: #fff;
+      border-radius: 14px;
+      padding: 40px 36px;
+      width: 340px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+      text-align: center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    #locked-box .lock-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    #locked-box h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin: 0 0 10px 0;
+    }
+
+    #locked-box p {
+      font-size: 13px;
+      color: #666;
+      margin: 0;
+    }
 
     .topbar {
       position: absolute; z-index: 1000; top: 10px; left: 10px;
@@ -61,6 +198,27 @@
 </head>
 
 <body>
+  <!-- Password overlay -->
+  <div id="pw-overlay">
+    <div id="pw-box">
+      <h2>🌉 TxDOT Bridge Risk Map</h2>
+      <p>Project 0-7239 — Enter your access password to continue.</p>
+      <input id="pw-input" type="password" placeholder="••••" maxlength="20" autocomplete="off" spellcheck="false" />
+      <button id="pw-btn">Unlock</button>
+      <div id="pw-error"></div>
+      <div id="pw-attempts"></div>
+    </div>
+  </div>
+
+  <!-- Locked overlay -->
+  <div id="locked-overlay">
+    <div id="locked-box">
+      <div class="lock-icon">🔒</div>
+      <h2>Access Locked</h2>
+      <p>Too many incorrect attempts.<br>Please reload the page and try again.</p>
+    </div>
+  </div>
+
   <div id="map"></div>
 
   <div class="topbar">
@@ -92,1049 +250,1114 @@
 
   <script>
     // =========================================================
-    // 1) DATASETS (CSV + per-file risk column)
+    // PASSWORD GATE
+    // SHA-1 of "7239"
     // =========================================================
-    const DATASETS = [
-      { id: "overheight",     name: "Overheight Collision Risk",   csvUrl: "risk_overheight_collision.csv", riskIndexCol: "Risk_Index" },
-      { id: "fatigue",        name: "Fatigue Risk",                csvUrl: "risk_fatigue.csv",            riskIndexCol: "Pf_fatigue" },
-      { id: "flood_scour",    name: "Flood + Scour Risk",          csvUrl: "risk_flood.csv",              riskIndexCol: "Risk_flood" },
-      { id: "wildfire",       name: "Wildfire Risk",               csvUrl: "risk_wildfire.csv",            riskIndexCol: "Risk_wildfire" },
-      { id: "hurricane",      name: "Hurricane Risk",              csvUrl: "risk_hurricane.csv",        riskIndexCol: "Risk_hurricane" },
-      { id: "explosive",      name: "Explosive Risk",              csvUrl: "risk_explosive.csv",          riskIndexCol: "CF" },
-      { id: "vessel",         name: "Vessel Collision Risk",       csvUrl: "risk_vessel_collision.csv",             riskIndexCol: "Risk_vessel" },
-      { id: "deterioration",  name: "Advanced Deterioration Risk", csvUrl: "risk_deterioration.csv",      riskIndexCol: "Risk_advdet" },
-      { id: "tornado",        name: "Tornado Risk",                csvUrl: "risk_tornado.csv",             riskIndexCol: "Risk_tornado" },
-      { id: "overloads",      name: "overload Risk",               csvUrl: "risk_overloads.csv",           riskIndexCol: "Risk_Index" },
-      { id: "other-truck",    name: "other-truck Risk",            csvUrl: "risk_other_truck.csv",         riskIndexCol: "Risk_truck" }
-    ];
+    const CORRECT_HASH = "5a042f309522d0319509e82d9ef4e9b19d1be086";
+    const MAX_ATTEMPTS = 5;
+    let pwAttempts = 0;
+    let appInitialized = false;
 
-    // Extra files
-    const WILDFIRE_EVENTS_CSV = "Texas_Wildfire_Data.csv";
-    const TORNADO_EVENTS_CSV  = "1950-2024_all_tornadoes.csv";
-    const HURRICANE_EVENTS_CSV = "hurricane_data.csv";
-    const TRUCK_CRASH_EVENTS_CSV = "crashes_data.csv";
-
-    const INCIDENT_KEY = "Risk_Level";
-
-    // Matching radii
-    const WILDFIRE_RADIUS_MILES = 1.0;
-    const TORNADO_RADIUS_MILES = 1.0;
-    const HURRICANE_RADIUS_MILES = 50.0;
-    const TRUCK_RADIUS_MILES = 120.0 / 1609.344; // 120 meters
-
-    // =========================================================
-    // 2) MAP SETUP
-    // =========================================================
-    const map = L.map("map", { preferCanvas: true }).setView([31, -99], 6);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(map);
-
-    const status = document.getElementById("status");
-    const typeFilter = document.getElementById("typeFilter");
-    const reloadBtn = document.getElementById("reload");
-    const riskDataset = document.getElementById("riskDataset");
-    const hazardToggle = document.getElementById("hazardToggle");
-    const trackToggle = document.getElementById("trackToggle");
-    const hazardToggleWrap = document.getElementById("hazardToggleWrap");
-    const trackToggleWrap = document.getElementById("trackToggleWrap");
-
-    for (const ds of DATASETS) {
-      const opt = document.createElement("option");
-      opt.value = ds.id;
-      opt.textContent = ds.name;
-      riskDataset.appendChild(opt);
+    async function sha1(str) {
+      const buf = new TextEncoder().encode(str);
+      const hash = await crypto.subtle.digest("SHA-1", buf);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // =========================================================
-    // 3) HELPERS
-    // =========================================================
-    const LABEL_MAP_HTML = {
-      "STRUCTURE_NUMBER_008": "Structure Number",
-      "STATE_CODE_001": "State Code",
-      "COUNTY_CODE_003": "County Code",
-      "LOCATION_009": "Location",
-      "coordinates (lat, lon)": "Coordinates (lat, lon)",
-      "COORDINATES": "Coordinates (lat, lon)",
-      "lat": "Latitude",
-      "lon": "Longitude",
-      "YEAR_BUILT_027": "Year Built",
-      "_year_built": "Year Built",
-      "bridge_uid": "Bridge Unique ID",
-      "Risk_Level": "Risk Level / Rank Group",
-      "Risk_rank_desc": "Rank (descending)",
-      "ADT_029": "ADT",
-      "ADT": "ADT",
-      "TRUCK_PCT": "Truck %",
-      "PERCENT_ADT_TRUCK_109": "Truck % (NBI 109)",
-      "truck_pct_used": "Truck %",
-      "MIN_VERT_CLR_010": "Minimum vertical clearance, h<sub>min</sub>",
-      "d_vc": "Clearance deficiency, d<sub>vc</sub>",
-      "N_detour": "Detoured vehicles/day, N<sub>d</sub>",
-      "p_height": "Overheight probability, p<sub>h</sub>",
-      "V_elem_height": "Element vulnerability, V<sub>e</sub>",
-      "Risk_Index": "Risk index, R",
-      "ADTT_SL": "Truck traffic (single lane), ADTT",
-      "AGE": "Bridge age, A",
-      "AM_years": "Mean fatigue life, A<sub>M</sub>",
-      "AE_years": "Evaluation fatigue life, A<sub>E</sub>",
-      "Pf_fatigue": "Fatigue failure probability, P<sub>f</sub>",
-      "SCOUR_CRITICAL_113": "Scour critical rating",
-      "p_flood": "Annual flood probability, p<sub>f</sub>",
-      "V_elem_flood": "Element vulnerability, V<sub>e</sub>",
-      "V_age_flood": "Age vulnerability, V<sub>age</sub>",
-      "V_des_flood": "Design vulnerability, V<sub>des</sub>",
-      "V_chan_flood": "Channel vulnerability, V<sub>chan</sub>",
-      "DECK_AREA": "Deck area",
-      "I_overwater": "Overwater indicator, I<sub>ow</sub>",
-      "Risk_flood": "Flood + scour risk index, R<sub>f</sub>",
-      "N_wildfires_within_1mi": "Wildfires within 1 mile, N",
-      "T_years_wildfire_obs": "Observation period (years), T",
-      "lambda_wildfire": "Wildfire annual rate, &lambda;",
-      "p_wildfire": "Annual wildfire probability, p<sub>w</sub>",
-      "V_elem_wildfire": "Element vulnerability, V<sub>e</sub>",
-      "V_age_wildfire": "Age vulnerability, V<sub>age</sub>",
-      "V_des_wildfire": "Design vulnerability, V<sub>des</sub>",
-      "wildfire_design_row_43B": "Bridge design type",
-      "wildfire_material_class": "Material class",
-      "sdes_wildfire_raw_0to5": "Design score (0–5), s<sub>des</sub>",
-      "Risk_wildfire": "Wildfire risk index, R<sub>w</sub>",
-      "V_des_hurr": "Design vulnerability, V<sub>des</sub>",
-      "V_scour_hurr": "Scour vulnerability, V<sub>scour</sub>",
-      "V_age_hurr": "Age vulnerability, V<sub>age</sub>",
-      "Risk_hurricane": "Hurricane risk index, R<sub>h</sub>",
-      "DETOUR_KILOS_019": "Detour length (km)",
-      "DETOUR_MILES": "Detour length (miles)",
-      "HISTORY_037": "History / importance",
-      "S_symbolic": "Symbolic importance, S",
-      "E_economic": "Economic importance, E",
-      "D_detour": "Detour impact, D",
-      "ED": "E &times; D",
-      "CF": "Criticality factor, CF = S + (E &times; D)",
-      "Critical_factor": "Criticality factor, CF = S + (E &times; D)",
-      "PIER_PROTECTION_111": "Pier protection",
-      "pvessel": "Annual vessel collision probability, p<sub>v</sub>",
-      "sdes_vessel": "Design score, s<sub>des</sub>",
-      "V_des_vessel": "Design vulnerability, V<sub>des</sub>",
-      "V_age_vessel": "Age vulnerability, V<sub>age</sub>",
-      "V_elem_vessel": "Element vulnerability, V<sub>e</sub>",
-      "Risk_vessel": "Vessel collision risk index, R<sub>v</sub>",
-      "MAT_GROUP": "Material group",
-      "DECK_COND_058": "Deck condition",
-      "SUPERSTRUCTURE_COND_059": "Superstructure condition",
-      "SUBSTRUCTURE_COND_060": "Substructure condition",
-      "F_deck": "Deck distress fraction, F<sub>deck</sub>",
-      "F_super": "Superstructure distress fraction, F<sub>super</sub>",
-      "F_sub": "Substructure distress fraction, F<sub>sub</sub>",
-      "D_decay_index": "Decay index, D",
-      "p_advdet": "Advanced deterioration probability, p<sub>ad</sub>",
-      "Risk_advdet": "Advanced deterioration risk index, R<sub>ad</sub>",
-      "N_i": "Event count, N<sub>i</sub>",
-      "lambda_i": "Annual rate, &lambda;<sub>i</sub>",
-      "p_tornado": "Annual tornado probability, p<sub>t</sub>",
-      "V_age": "Age vulnerability, V<sub>age</sub>",
-      "Risk_tornado": "Tornado risk index, R<sub>t</sub>",
-      "INVENTORY_RATING_066": "Inventory rating, R<sub>inv</sub>",
-      "FUNCTIONAL_CLASS_026": "Functional class",
-      "r_i_lb": "Operating rating, r<sub>i</sub>",
-      "d_i": "Detoured truck fraction, d<sub>i</sub>",
-      "V_age_overload": "Age vulnerability, V<sub>age</sub>",
-      "V_elem_overload": "Element vulnerability, V<sub>e</sub>"
-    };
+    async function checkPassword() {
+      const input = document.getElementById("pw-input");
+      const errorEl = document.getElementById("pw-error");
+      const attemptsEl = document.getElementById("pw-attempts");
+      const val = input.value.trim();
 
-    function colorMapFor() {
-      return {
-        "Top 20":  "#b30000",
-        "Top 50":  "#e34a33",
-        "Top 100": "#fd8d3c"
+      if (!val) {
+        errorEl.textContent = "Please enter a password.";
+        return;
+      }
+
+      const hash = await sha1(val);
+
+      if (hash === CORRECT_HASH) {
+        document.getElementById("pw-overlay").style.display = "none";
+        document.getElementById("map").style.display = "block";
+        if (!appInitialized) {
+          appInitialized = true;
+          initializeApp();
+        }
+      } else {
+        pwAttempts++;
+        input.value = "";
+        input.classList.remove("shake");
+        void input.offsetWidth;
+        input.classList.add("shake");
+        setTimeout(() => input.classList.remove("shake"), 400);
+
+        if (pwAttempts >= MAX_ATTEMPTS) {
+          document.getElementById("pw-overlay").style.display = "none";
+          document.getElementById("locked-overlay").style.display = "flex";
+        } else {
+          const rem = MAX_ATTEMPTS - pwAttempts;
+          errorEl.textContent = "Incorrect password. Please try again.";
+          attemptsEl.textContent = `${rem} attempt${rem !== 1 ? "s" : ""} remaining`;
+        }
+      }
+    }
+
+    document.getElementById("pw-btn").addEventListener("click", checkPassword);
+    document.getElementById("pw-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") checkPassword();
+    });
+
+    // =========================================================
+    // APP
+    // =========================================================
+    function initializeApp() {
+      // =========================================================
+      // 1) DATASETS (CSV + per-file risk column)
+      // =========================================================
+      const DATASETS = [
+        { id: "overheight",     name: "Overheight Collision Risk",   csvUrl: "risk_overheight_collision.csv", riskIndexCol: "Risk_Index" },
+        { id: "fatigue",        name: "Fatigue Risk",                csvUrl: "risk_fatigue.csv",            riskIndexCol: "Pf_fatigue" },
+        { id: "flood_scour",    name: "Flood + Scour Risk",          csvUrl: "risk_flood.csv",              riskIndexCol: "Risk_flood" },
+        { id: "wildfire",       name: "Wildfire Risk",               csvUrl: "risk_wildfire.csv",           riskIndexCol: "Risk_wildfire" },
+        { id: "hurricane",      name: "Hurricane Risk",              csvUrl: "risk_hurricane.csv",          riskIndexCol: "Risk_hurricane" },
+        { id: "explosive",      name: "Explosive Risk",              csvUrl: "risk_explosive.csv",          riskIndexCol: "CF" },
+        { id: "vessel",         name: "Vessel Collision Risk",       csvUrl: "risk_vessel_collision.csv",   riskIndexCol: "Risk_vessel" },
+        { id: "deterioration",  name: "Advanced Deterioration Risk", csvUrl: "risk_deterioration.csv",      riskIndexCol: "Risk_advdet" },
+        { id: "tornado",        name: "Tornado Risk",                csvUrl: "risk_tornado.csv",            riskIndexCol: "Risk_tornado" },
+        { id: "overloads",      name: "overload Risk",               csvUrl: "risk_overloads.csv",          riskIndexCol: "Risk_Index" },
+        { id: "other-truck",    name: "other-truck Risk",            csvUrl: "risk_other_truck.csv",        riskIndexCol: "Risk_truck" }
+      ];
+
+      // Extra files
+      const WILDFIRE_EVENTS_CSV = "Texas_Wildfire_Data.csv";
+      const TORNADO_EVENTS_CSV  = "1950-2024_all_tornadoes.csv";
+      const HURRICANE_EVENTS_CSV = "hurricane_data.csv";
+      const TRUCK_CRASH_EVENTS_CSV = "crashes_data.csv";
+
+      const INCIDENT_KEY = "Risk_Level";
+
+      // Matching radii
+      const WILDFIRE_RADIUS_MILES = 1.0;
+      const TORNADO_RADIUS_MILES = 1.0;
+      const HURRICANE_RADIUS_MILES = 50.0;
+      const TRUCK_RADIUS_MILES = 120.0 / 1609.344; // 120 meters
+
+      // =========================================================
+      // 2) MAP SETUP
+      // =========================================================
+      const map = L.map("map", { preferCanvas: true }).setView([31, -99], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      const status = document.getElementById("status");
+      const typeFilter = document.getElementById("typeFilter");
+      const reloadBtn = document.getElementById("reload");
+      const riskDataset = document.getElementById("riskDataset");
+      const hazardToggle = document.getElementById("hazardToggle");
+      const trackToggle = document.getElementById("trackToggle");
+      const hazardToggleWrap = document.getElementById("hazardToggleWrap");
+      const trackToggleWrap = document.getElementById("trackToggleWrap");
+
+      riskDataset.innerHTML = "";
+      for (const ds of DATASETS) {
+        const opt = document.createElement("option");
+        opt.value = ds.id;
+        opt.textContent = ds.name;
+        riskDataset.appendChild(opt);
+      }
+
+      // =========================================================
+      // 3) HELPERS
+      // =========================================================
+      const LABEL_MAP_HTML = {
+        "STRUCTURE_NUMBER_008": "Structure Number",
+        "STATE_CODE_001": "State Code",
+        "COUNTY_CODE_003": "County Code",
+        "LOCATION_009": "Location",
+        "coordinates (lat, lon)": "Coordinates (lat, lon)",
+        "COORDINATES": "Coordinates (lat, lon)",
+        "lat": "Latitude",
+        "lon": "Longitude",
+        "YEAR_BUILT_027": "Year Built",
+        "_year_built": "Year Built",
+        "bridge_uid": "Bridge Unique ID",
+        "Risk_Level": "Risk Level / Rank Group",
+        "Risk_rank_desc": "Rank (descending)",
+        "ADT_029": "ADT",
+        "ADT": "ADT",
+        "TRUCK_PCT": "Truck %",
+        "PERCENT_ADT_TRUCK_109": "Truck % (NBI 109)",
+        "truck_pct_used": "Truck %",
+        "MIN_VERT_CLR_010": "Minimum vertical clearance, h<sub>min</sub>",
+        "d_vc": "Clearance deficiency, d<sub>vc</sub>",
+        "N_detour": "Detoured vehicles/day, N<sub>d</sub>",
+        "p_height": "Overheight probability, p<sub>h</sub>",
+        "V_elem_height": "Element vulnerability, V<sub>e</sub>",
+        "Risk_Index": "Risk index, R",
+        "ADTT_SL": "Truck traffic (single lane), ADTT",
+        "AGE": "Bridge age, A",
+        "AM_years": "Mean fatigue life, A<sub>M</sub>",
+        "AE_years": "Evaluation fatigue life, A<sub>E</sub>",
+        "Pf_fatigue": "Fatigue failure probability, P<sub>f</sub>",
+        "SCOUR_CRITICAL_113": "Scour critical rating",
+        "p_flood": "Annual flood probability, p<sub>f</sub>",
+        "V_elem_flood": "Element vulnerability, V<sub>e</sub>",
+        "V_age_flood": "Age vulnerability, V<sub>age</sub>",
+        "V_des_flood": "Design vulnerability, V<sub>des</sub>",
+        "V_chan_flood": "Channel vulnerability, V<sub>chan</sub>",
+        "DECK_AREA": "Deck area",
+        "I_overwater": "Overwater indicator, I<sub>ow</sub>",
+        "Risk_flood": "Flood + scour risk index, R<sub>f</sub>",
+        "N_wildfires_within_1mi": "Wildfires within 1 mile, N",
+        "T_years_wildfire_obs": "Observation period (years), T",
+        "lambda_wildfire": "Wildfire annual rate, &lambda;",
+        "p_wildfire": "Annual wildfire probability, p<sub>w</sub>",
+        "V_elem_wildfire": "Element vulnerability, V<sub>e</sub>",
+        "V_age_wildfire": "Age vulnerability, V<sub>age</sub>",
+        "V_des_wildfire": "Design vulnerability, V<sub>des</sub>",
+        "wildfire_design_row_43B": "Bridge design type",
+        "wildfire_material_class": "Material class",
+        "sdes_wildfire_raw_0to5": "Design score (0–5), s<sub>des</sub>",
+        "Risk_wildfire": "Wildfire risk index, R<sub>w</sub>",
+        "V_des_hurr": "Design vulnerability, V<sub>des</sub>",
+        "V_scour_hurr": "Scour vulnerability, V<sub>scour</sub>",
+        "V_age_hurr": "Age vulnerability, V<sub>age</sub>",
+        "Risk_hurricane": "Hurricane risk index, R<sub>h</sub>",
+        "DETOUR_KILOS_019": "Detour length (km)",
+        "DETOUR_MILES": "Detour length (miles)",
+        "HISTORY_037": "History / importance",
+        "S_symbolic": "Symbolic importance, S",
+        "E_economic": "Economic importance, E",
+        "D_detour": "Detour impact, D",
+        "ED": "E × D",
+        "CF": "Criticality factor, CF = S + (E × D)",
+        "Critical_factor": "Criticality factor, CF = S + (E × D)",
+        "PIER_PROTECTION_111": "Pier protection",
+        "pvessel": "Annual vessel collision probability, p<sub>v</sub>",
+        "sdes_vessel": "Design score, s<sub>des</sub>",
+        "V_des_vessel": "Design vulnerability, V<sub>des</sub>",
+        "V_age_vessel": "Age vulnerability, V<sub>age</sub>",
+        "V_elem_vessel": "Element vulnerability, V<sub>e</sub>",
+        "Risk_vessel": "Vessel collision risk index, R<sub>v</sub>",
+        "MAT_GROUP": "Material group",
+        "DECK_COND_058": "Deck condition",
+        "SUPERSTRUCTURE_COND_059": "Superstructure condition",
+        "SUBSTRUCTURE_COND_060": "Substructure condition",
+        "F_deck": "Deck distress fraction, F<sub>deck</sub>",
+        "F_super": "Superstructure distress fraction, F<sub>super</sub>",
+        "F_sub": "Substructure distress fraction, F<sub>sub</sub>",
+        "D_decay_index": "Decay index, D",
+        "p_advdet": "Advanced deterioration probability, p<sub>ad</sub>",
+        "Risk_advdet": "Advanced deterioration risk index, R<sub>ad</sub>",
+        "N_i": "Event count, N<sub>i</sub>",
+        "lambda_i": "Annual rate, &lambda;<sub>i</sub>",
+        "p_tornado": "Annual tornado probability, p<sub>t</sub>",
+        "V_age": "Age vulnerability, V<sub>age</sub>",
+        "Risk_tornado": "Tornado risk index, R<sub>t</sub>",
+        "INVENTORY_RATING_066": "Inventory rating, R<sub>inv</sub>",
+        "FUNCTIONAL_CLASS_026": "Functional class",
+        "r_i_lb": "Operating rating, r<sub>i</sub>",
+        "d_i": "Detoured truck fraction, d<sub>i</sub>",
+        "V_age_overload": "Age vulnerability, V<sub>age</sub>",
+        "V_elem_overload": "Element vulnerability, V<sub>e</sub>"
       };
-    }
 
-    function looksSwapped(lon, lat) {
-      return Math.abs(lon) <= 90 && Math.abs(lat) > 90 && Math.abs(lat) <= 180;
-    }
-
-    function keyLookupFromKeys(keys, patterns) {
-      const found = keys.find(k => patterns.some(rx => rx.test(String(k))));
-      return found || null;
-    }
-
-    function parseCoordsField(val) {
-      if (val == null) return null;
-      const s = String(val).trim();
-      const m = s.match(/-?\d+(?:\.\d+)?/g);
-      if (!m || m.length < 2) return null;
-      let lat = parseFloat(m[0]), lon = parseFloat(m[1]);
-      if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const t = lat; lat = lon; lon = t; }
-      if (!isFinite(lat) || !isFinite(lon)) return null;
-      return { lat, lon };
-    }
-
-    function markerRadiusFromRisk(v, datasetId) {
-      return 6;
-    }
-
-    function makePopup(props) {
-      if (!props) return "";
-      const rows = [];
-      const isUrl = v => typeof v === "string" && /^https?:\/\//i.test(v);
-      const domainText = url => { try { return new URL(url).hostname.replace(/^www\./,""); } catch { return url; } };
-
-      for (const [k, rawV] of Object.entries(props)) {
-        if (rawV == null) continue;
-        let v = String(rawV).trim();
-        if (!v || v.toLowerCase() === "null") continue;
-
-        if (isUrl(v)) v = `<a href="${rawV}" target="_blank" rel="noopener">${domainText(rawV)}</a>`;
-
-        const label = LABEL_MAP_HTML[k] || k;
-        rows.push(
-          `<tr>
-            <th style="text-align:left; padding-right:10px; white-space:nowrap;">${label}</th>
-            <td>${v}</td>
-          </tr>`
-        );
+      function colorMapFor() {
+        return {
+          "Top 20": "#b30000",
+          "Top 50": "#e34a33",
+          "Top 100": "#fd8d3c"
+        };
       }
 
-      return `<div style="font:13px/1.35 system-ui, Segoe UI, Roboto, Arial;">
-                <table>${rows.join("")}</table>
-              </div>`;
-    }
-
-    function haversineMiles(lat1, lon1, lat2, lon2) {
-      const toRad = deg => deg * Math.PI / 180;
-      const R = 3958.7613;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
-
-    function getHurricaneCategoryFromMph(mph) {
-      const v = Number(mph);
-      if (!isFinite(v)) return { cat: "TS/TD", color: "#4fc3f7", damage: "Below hurricane category" };
-      if (v >= 157) return { cat: "Category 5", color: "#6a1b9a", damage: "Total Destruction" };
-      if (v >= 130) return { cat: "Category 4", color: "#d81b60", damage: "Catastrophic" };
-      if (v >= 111) return { cat: "Category 3", color: "#f4511e", damage: "Devastating" };
-      if (v >= 96)  return { cat: "Category 2", color: "#fb8c00", damage: "Extremely Dangerous" };
-      if (v >= 74)  return { cat: "Category 1", color: "#fdd835", damage: "Very Dangerous" };
-      return { cat: "TS/TD", color: "#4fc3f7", damage: "Below hurricane category" };
-    }
-
-    function wildfireIcon(sizeVal) {
-      const s = Number(sizeVal);
-      let px = 16;
-      if (isFinite(s)) {
-        if (s >= 1000) px = 28;
-        else if (s >= 100) px = 24;
-        else if (s >= 10) px = 20;
+      function looksSwapped(lon, lat) {
+        return Math.abs(lon) <= 90 && Math.abs(lat) > 90 && Math.abs(lat) <= 180;
       }
-      return L.divIcon({
-        className: "hazard-fire-icon",
-        html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🔥</div>`,
-        iconSize: [px, px],
-        iconAnchor: [px/2, px/2]
-      });
-    }
 
-    function tornadoIcon(magVal) {
-      const m = Number(magVal);
-      let px = 16;
-      if (isFinite(m)) {
-        if (m >= 4) px = 28;
-        else if (m >= 3) px = 24;
-        else if (m >= 2) px = 20;
+      function keyLookupFromKeys(keys, patterns) {
+        const found = keys.find(k => patterns.some(rx => rx.test(String(k))));
+        return found || null;
       }
-      return L.divIcon({
-        className: "hazard-tornado-icon",
-        html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🌪️</div>`,
-        iconSize: [px, px],
-        iconAnchor: [px/2, px/2]
-      });
-    }
 
-    function hurricaneIcon(windMphVal) {
-      const v = Number(windMphVal);
-      let px = 16;
-      if (isFinite(v)) {
-        if (v >= 157) px = 30;
-        else if (v >= 130) px = 28;
-        else if (v >= 111) px = 24;
-        else if (v >= 96) px = 22;
-        else if (v >= 74) px = 20;
+      function parseCoordsField(val) {
+        if (val == null) return null;
+        const s = String(val).trim();
+        const m = s.match(/-?\d+(?:\.\d+)?/g);
+        if (!m || m.length < 2) return null;
+        let lat = parseFloat(m[0]), lon = parseFloat(m[1]);
+        if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const t = lat; lat = lon; lon = t; }
+        if (!isFinite(lat) || !isFinite(lon)) return null;
+        return { lat, lon };
       }
-      return L.divIcon({
-        className: "hazard-hurricane-icon",
-        html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🌀</div>`,
-        iconSize: [px, px],
-        iconAnchor: [px/2, px/2]
-      });
-    }
 
-    function truckIcon(severityText) {
-      const s = String(severityText || "").toUpperCase();
-      let px = 16;
-      if (s.includes("FATAL") || s.includes("K -")) px = 24;
-      else if (s.includes("SERIOUS") || s.includes("A -")) px = 22;
-      else if (s.includes("INJURY") || s.includes("B -") || s.includes("C -")) px = 20;
-      return L.divIcon({
-        className: "hazard-truck-icon",
-        html: `<div style="font-size:${px}px;line-height:1;text-align:center;">⚠️</div>`,
-        iconSize: [px, px],
-        iconAnchor: [px/2, px/2]
-      });
-    }
+      function markerRadiusFromRisk(v, datasetId) {
+        return 6;
+      }
 
-    function wildfirePopupHtml(wf, nearestBridgeText) {
-      return `
-        <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:280px;">
-          <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Wildfire Incident</div>
-          <table>
-            <tr><th>Fire Name</th><td>${wf.FIRE_NAME || "Unnamed Fire"}</td></tr>
-            <tr><th>Year</th><td>${wf.FIRE_YEAR || "NA"}</td></tr>
-            <tr><th>Fire Size</th><td>${wf.FIRE_SIZE || "NA"}</td></tr>
-            <tr><th>Cause</th><td>${wf.NWCG_GENERAL_CAUSE || wf.NWCG_CAUSE_CLASSIFICATION || "NA"}</td></tr>
-            <tr><th>County</th><td>${wf.FIPS_NAME || wf.COUNTY || "NA"}</td></tr>
-            <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
-          </table>
-        </div>`;
-    }
+      function makePopup(props) {
+        if (!props) return "";
+        const rows = [];
+        const isUrl = v => typeof v === "string" && /^https?:\/\//i.test(v);
+        const domainText = url => { try { return new URL(url).hostname.replace(/^www\./,""); } catch { return url; } };
 
-    function tornadoPopupHtml(td, nearestBridgeText) {
-      return `
-        <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:300px;">
-          <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Texas Tornado Event</div>
-          <table>
-            <tr><th>Date</th><td>${td.date || "NA"}</td></tr>
-            <tr><th>Time</th><td>${td.time || "NA"}</td></tr>
-            <tr><th>State</th><td>${td.st || "NA"}</td></tr>
-            <tr><th>Magnitude</th><td>${td.mag ?? "NA"}</td></tr>
-            <tr><th>Injuries</th><td>${td.inj ?? "NA"}</td></tr>
-            <tr><th>Fatalities</th><td>${td.fat ?? "NA"}</td></tr>
-            <tr><th>Path Length (mi)</th><td>${td.len ?? "NA"}</td></tr>
-            <tr><th>Path Width</th><td>${td.wid ?? "NA"}</td></tr>
-            <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
-          </table>
-        </div>`;
-    }
+        for (const [k, rawV] of Object.entries(props)) {
+          if (rawV == null) continue;
+          let v = String(rawV).trim();
+          if (!v || v.toLowerCase() === "null") continue;
 
-    function hurricanePopupHtml(hc, nearestBridgeText) {
-      return `
-        <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:320px;">
-          <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Hurricane / Tropical Cyclone Observation</div>
-          <table>
-            <tr><th>Storm Name</th><td>${hc["Storm Name"] || "NA"}</td></tr>
-            <tr><th>Storm ID</th><td>${hc["Storm Identifier"] || "NA"}</td></tr>
-            <tr><th>Date</th><td>${hc["Observation Date"] || "NA"}</td></tr>
-            <tr><th>Type</th><td>${hc["Available Storm Type"] || "NA"}</td></tr>
-            <tr><th>Year</th><td>${hc["Calendar Year"] || "NA"}</td></tr>
-            <tr><th>Observed Wind (kt)</th><td>${hc["Maximum Sustained Wind (knots)"] ?? "NA"}</td></tr>
-            <tr><th>Max Nearby Wind (kt)</th><td>${hc["max_sustained_wind_kt_nearby"] ?? "NA"}</td></tr>
-            <tr><th>Max Nearby Wind (mph)</th><td>${hc["max_sustained_wind_mph_nearby"] ?? "NA"}</td></tr>
-            <tr><th>Min Pressure (mb)</th><td>${hc["Minimum Sea Level Pressure (millibars)"] ?? "NA"}</td></tr>
-            <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
-          </table>
-        </div>`;
-    }
+          if (isUrl(v)) v = `<a href="${rawV}" target="_blank" rel="noopener">${domainText(rawV)}</a>`;
 
-    function truckPopupHtml(cr, nearestBridgeText) {
-      return `
-        <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:320px;">
-          <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Other Truck Collision Crash</div>
-          <table>
-            <tr><th>Crash ID</th><td>${cr["Crash ID"] ?? "NA"}</td></tr>
-            <tr><th>Crash Date</th><td>${cr["Crash Date"] || "NA"}</td></tr>
-            <tr><th>Crash Year</th><td>${cr["Crash Year"] || "NA"}</td></tr>
-            <tr><th>County</th><td>${cr["County"] || "NA"}</td></tr>
-            <tr><th>City</th><td>${cr["City"] || "NA"}</td></tr>
-            <tr><th>Crash Severity</th><td>${cr["Crash Severity"] || "NA"}</td></tr>
-            <tr><th>Bridge Detail</th><td>${cr["Bridge Detail"] || "NA"}</td></tr>
-            <tr><th>Object Struck</th><td>${cr["Object Struck"] || "NA"}</td></tr>
-            <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
-          </table>
-        </div>`;
-    }
+          const label = LABEL_MAP_HTML[k] || k;
+          rows.push(
+            `<tr>
+              <th style="text-align:left; padding-right:10px; white-space:nowrap;">${label}</th>
+              <td>${v}</td>
+            </tr>`
+          );
+        }
 
-    // =========================================================
-    // 4) CSV LOADING
-    // =========================================================
-    async function readCsvObjectsFromUrl(url) {
-      return new Promise((resolve, reject) => {
-        Papa.parse(url, {
-          download: true,
-          header: true,
-          dynamicTyping: false,
-          skipEmptyLines: true,
-          complete: (results) => {
-            if (results.errors && results.errors.length) {
-              console.warn("CSV parse warnings:", results.errors.slice(0, 5));
+        return `<div style="font:13px/1.35 system-ui, Segoe UI, Roboto, Arial;">
+                  <table>${rows.join("")}</table>
+                </div>`;
+      }
+
+      function haversineMiles(lat1, lon1, lat2, lon2) {
+        const toRad = deg => deg * Math.PI / 180;
+        const R = 3958.7613;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      }
+
+      function getHurricaneCategoryFromMph(mph) {
+        const v = Number(mph);
+        if (!isFinite(v)) return { cat: "TS/TD", color: "#4fc3f7", damage: "Below hurricane category" };
+        if (v >= 157) return { cat: "Category 5", color: "#6a1b9a", damage: "Total Destruction" };
+        if (v >= 130) return { cat: "Category 4", color: "#d81b60", damage: "Catastrophic" };
+        if (v >= 111) return { cat: "Category 3", color: "#f4511e", damage: "Devastating" };
+        if (v >= 96)  return { cat: "Category 2", color: "#fb8c00", damage: "Extremely Dangerous" };
+        if (v >= 74)  return { cat: "Category 1", color: "#fdd835", damage: "Very Dangerous" };
+        return { cat: "TS/TD", color: "#4fc3f7", damage: "Below hurricane category" };
+      }
+
+      function wildfireIcon(sizeVal) {
+        const s = Number(sizeVal);
+        let px = 16;
+        if (isFinite(s)) {
+          if (s >= 1000) px = 28;
+          else if (s >= 100) px = 24;
+          else if (s >= 10) px = 20;
+        }
+        return L.divIcon({
+          className: "hazard-fire-icon",
+          html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🔥</div>`,
+          iconSize: [px, px],
+          iconAnchor: [px/2, px/2]
+        });
+      }
+
+      function tornadoIcon(magVal) {
+        const m = Number(magVal);
+        let px = 16;
+        if (isFinite(m)) {
+          if (m >= 4) px = 28;
+          else if (m >= 3) px = 24;
+          else if (m >= 2) px = 20;
+        }
+        return L.divIcon({
+          className: "hazard-tornado-icon",
+          html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🌪️</div>`,
+          iconSize: [px, px],
+          iconAnchor: [px/2, px/2]
+        });
+      }
+
+      function hurricaneIcon(windMphVal) {
+        const v = Number(windMphVal);
+        let px = 16;
+        if (isFinite(v)) {
+          if (v >= 157) px = 30;
+          else if (v >= 130) px = 28;
+          else if (v >= 111) px = 24;
+          else if (v >= 96) px = 22;
+          else if (v >= 74) px = 20;
+        }
+        return L.divIcon({
+          className: "hazard-hurricane-icon",
+          html: `<div style="font-size:${px}px;line-height:1;text-align:center;">🌀</div>`,
+          iconSize: [px, px],
+          iconAnchor: [px/2, px/2]
+        });
+      }
+
+      function truckIcon(severityText) {
+        const s = String(severityText || "").toUpperCase();
+        let px = 16;
+        if (s.includes("FATAL") || s.includes("K -")) px = 24;
+        else if (s.includes("SERIOUS") || s.includes("A -")) px = 22;
+        else if (s.includes("INJURY") || s.includes("B -") || s.includes("C -")) px = 20;
+        return L.divIcon({
+          className: "hazard-truck-icon",
+          html: `<div style="font-size:${px}px;line-height:1;text-align:center;">⚠️</div>`,
+          iconSize: [px, px],
+          iconAnchor: [px/2, px/2]
+        });
+      }
+
+      function wildfirePopupHtml(wf, nearestBridgeText) {
+        return `
+          <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:280px;">
+            <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Wildfire Incident</div>
+            <table>
+              <tr><th>Fire Name</th><td>${wf.FIRE_NAME || "Unnamed Fire"}</td></tr>
+              <tr><th>Year</th><td>${wf.FIRE_YEAR || "NA"}</td></tr>
+              <tr><th>Fire Size</th><td>${wf.FIRE_SIZE || "NA"}</td></tr>
+              <tr><th>Cause</th><td>${wf.NWCG_GENERAL_CAUSE || wf.NWCG_CAUSE_CLASSIFICATION || "NA"}</td></tr>
+              <tr><th>County</th><td>${wf.FIPS_NAME || wf.COUNTY || "NA"}</td></tr>
+              <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
+            </table>
+          </div>`;
+      }
+
+      function tornadoPopupHtml(td, nearestBridgeText) {
+        return `
+          <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:300px;">
+            <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Texas Tornado Event</div>
+            <table>
+              <tr><th>Date</th><td>${td.date || "NA"}</td></tr>
+              <tr><th>Time</th><td>${td.time || "NA"}</td></tr>
+              <tr><th>State</th><td>${td.st || "NA"}</td></tr>
+              <tr><th>Magnitude</th><td>${td.mag ?? "NA"}</td></tr>
+              <tr><th>Injuries</th><td>${td.inj ?? "NA"}</td></tr>
+              <tr><th>Fatalities</th><td>${td.fat ?? "NA"}</td></tr>
+              <tr><th>Path Length (mi)</th><td>${td.len ?? "NA"}</td></tr>
+              <tr><th>Path Width</th><td>${td.wid ?? "NA"}</td></tr>
+              <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
+            </table>
+          </div>`;
+      }
+
+      function hurricanePopupHtml(hc, nearestBridgeText) {
+        return `
+          <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:320px;">
+            <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Hurricane / Tropical Cyclone Observation</div>
+            <table>
+              <tr><th>Storm Name</th><td>${hc["Storm Name"] || "NA"}</td></tr>
+              <tr><th>Storm ID</th><td>${hc["Storm Identifier"] || "NA"}</td></tr>
+              <tr><th>Date</th><td>${hc["Observation Date"] || "NA"}</td></tr>
+              <tr><th>Type</th><td>${hc["Available Storm Type"] || "NA"}</td></tr>
+              <tr><th>Year</th><td>${hc["Calendar Year"] || "NA"}</td></tr>
+              <tr><th>Observed Wind (kt)</th><td>${hc["Maximum Sustained Wind (knots)"] ?? "NA"}</td></tr>
+              <tr><th>Max Nearby Wind (kt)</th><td>${hc["max_sustained_wind_kt_nearby"] ?? "NA"}</td></tr>
+              <tr><th>Max Nearby Wind (mph)</th><td>${hc["max_sustained_wind_mph_nearby"] ?? "NA"}</td></tr>
+              <tr><th>Min Pressure (mb)</th><td>${hc["Minimum Sea Level Pressure (millibars)"] ?? "NA"}</td></tr>
+              <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
+            </table>
+          </div>`;
+      }
+
+      function truckPopupHtml(cr, nearestBridgeText) {
+        return `
+          <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial; min-width:320px;">
+            <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Other Truck Collision Crash</div>
+            <table>
+              <tr><th>Crash ID</th><td>${cr["Crash ID"] ?? "NA"}</td></tr>
+              <tr><th>Crash Date</th><td>${cr["Crash Date"] || "NA"}</td></tr>
+              <tr><th>Crash Year</th><td>${cr["Crash Year"] || "NA"}</td></tr>
+              <tr><th>County</th><td>${cr["County"] || "NA"}</td></tr>
+              <tr><th>City</th><td>${cr["City"] || "NA"}</td></tr>
+              <tr><th>Crash Severity</th><td>${cr["Crash Severity"] || "NA"}</td></tr>
+              <tr><th>Bridge Detail</th><td>${cr["Bridge Detail"] || "NA"}</td></tr>
+              <tr><th>Object Struck</th><td>${cr["Object Struck"] || "NA"}</td></tr>
+              <tr><th>Nearest Bridge</th><td>${nearestBridgeText}</td></tr>
+            </table>
+          </div>`;
+      }
+
+      // =========================================================
+      // 4) CSV LOADING
+      // =========================================================
+      async function readCsvObjectsFromUrl(url) {
+        return new Promise((resolve, reject) => {
+          Papa.parse(url, {
+            download: true,
+            header: true,
+            dynamicTyping: false,
+            skipEmptyLines: true,
+            complete: (results) => {
+              if (results.errors && results.errors.length) {
+                console.warn("CSV parse warnings:", results.errors.slice(0, 5));
+              }
+              resolve(results.data || []);
+            },
+            error: (err) => reject(err),
+          });
+        });
+      }
+
+      async function readTruckCrashCsv(url) {
+        return new Promise((resolve, reject) => {
+          Papa.parse(url, {
+            download: true,
+            header: true,
+            dynamicTyping: false,
+            skipEmptyLines: true,
+            preview: 0,
+            beforeFirstChunk: function (chunk) {
+              const lines = chunk.split(/\r\n|\n|\r/);
+              return lines.slice(12).join("\n");
+            },
+            complete: (results) => resolve(results.data || []),
+            error: (err) => reject(err),
+          });
+        });
+      }
+
+      // =========================================================
+      // 5) PLOTTING STATE
+      // =========================================================
+      let currentLayer = null;
+      let hazardLayer = null;
+      let trackLayer = null;
+      let groupsByType = {};
+      let allMarkers = [];
+      let legendControl = null;
+      let lastPoints = [];
+      let lastDataset = null;
+
+      let wildfireRows = null;
+      let tornadoRows = null;
+      let hurricaneRows = null;
+      let truckRows = null;
+
+      async function ensureExtraDataLoaded() {
+        if (!wildfireRows) {
+          wildfireRows = await readCsvObjectsFromUrl(WILDFIRE_EVENTS_CSV);
+          wildfireRows = wildfireRows
+            .map(r => ({ ...r, LATITUDE: parseFloat(r.LATITUDE), LONGITUDE: parseFloat(r.LONGITUDE) }))
+            .filter(r => isFinite(r.LATITUDE) && isFinite(r.LONGITUDE));
+        }
+
+        if (!tornadoRows) {
+          tornadoRows = await readCsvObjectsFromUrl(TORNADO_EVENTS_CSV);
+          tornadoRows = tornadoRows
+            .map(r => ({
+              ...r,
+              slat: parseFloat(r.slat),
+              slon: parseFloat(r.slon),
+              elat: parseFloat(r.elat),
+              elon: parseFloat(r.elon),
+              mag: Number(r.mag),
+              inj: Number(r.inj),
+              fat: Number(r.fat),
+              len: Number(r.len),
+              wid: Number(r.wid)
+            }))
+            .filter(r => String(r.st).toUpperCase() === "TX" && isFinite(r.slat) && isFinite(r.slon));
+        }
+
+        if (!hurricaneRows) {
+          hurricaneRows = await readCsvObjectsFromUrl(HURRICANE_EVENTS_CSV);
+          hurricaneRows = hurricaneRows
+            .map(r => ({
+              ...r,
+              "Geograpic Latitude": parseFloat(r["Geograpic Latitude"]),
+              "Geographic Longitude": parseFloat(r["Geographic Longitude"]),
+              "Maximum Sustained Wind (knots)": Number(r["Maximum Sustained Wind (knots)"]),
+              "Minimum Sea Level Pressure (millibars)": Number(r["Minimum Sea Level Pressure (millibars)"]),
+              "Calendar Year": Number(r["Calendar Year"]),
+              "max_sustained_wind_kt_nearby": Number(r["max_sustained_wind_kt_nearby"]),
+              "max_sustained_wind_mph_nearby": Number(r["max_sustained_wind_mph_nearby"])
+            }))
+            .filter(r => isFinite(r["Geograpic Latitude"]) && isFinite(r["Geographic Longitude"]));
+        }
+
+        if (!truckRows) {
+          truckRows = await readTruckCrashCsv(TRUCK_CRASH_EVENTS_CSV);
+          truckRows = truckRows
+            .map(r => ({
+              ...r,
+              "Latitude": parseFloat(r["Latitude"]),
+              "Longitude": parseFloat(r["Longitude"])
+            }))
+            .filter(r => r["Crash ID"] !== undefined && isFinite(r["Latitude"]) && isFinite(r["Longitude"]));
+        }
+      }
+
+      function getDisplayedPoints(points) {
+        const selected = typeFilter.value;
+        if (selected === "Top 20") {
+          return points.filter(p => p.r[INCIDENT_KEY] === "Top 20");
+        }
+        if (selected === "Top 50") {
+          return points.filter(p => p.r[INCIDENT_KEY] === "Top 20" || p.r[INCIDENT_KEY] === "Top 50");
+        }
+        if (selected === "Top 100") {
+          return points.filter(p =>
+            p.r[INCIDENT_KEY] === "Top 20" ||
+            p.r[INCIDENT_KEY] === "Top 50" ||
+            p.r[INCIDENT_KEY] === "Top 100"
+          );
+        }
+        return points;
+      }
+
+      async function drawHazardOverlays(points, dataset) {
+        if (hazardLayer) { map.removeLayer(hazardLayer); hazardLayer = null; }
+        if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
+
+        hazardToggleWrap.style.display = "none";
+        trackToggleWrap.style.display = "none";
+
+        if (!["wildfire", "tornado", "hurricane", "other-truck"].includes(dataset.id)) return;
+        await ensureExtraDataLoaded();
+
+        const displayedPoints = getDisplayedPoints(points);
+        if (!displayedPoints.length) return;
+
+        const hazardMarkers = [];
+        const extraTracks = [];
+
+        if (dataset.id === "wildfire") {
+          hazardToggleWrap.style.display = "inline-block";
+          trackToggleWrap.style.display = "inline-block";
+
+          const matchedWildfires = [];
+          for (const wf of wildfireRows) {
+            let nearestBridge = null;
+            let nearestDistance = Infinity;
+
+            for (const p of displayedPoints) {
+              const d = haversineMiles(p.lat, p.lon, wf.LATITUDE, wf.LONGITUDE);
+              if (d <= WILDFIRE_RADIUS_MILES && d < nearestDistance) {
+                nearestDistance = d;
+                nearestBridge = p;
+              }
             }
-            resolve(results.data || []);
-          },
-          error: (err) => reject(err),
-        });
-      });
-    }
 
-    async function readTruckCrashCsv(url) {
-      return new Promise((resolve, reject) => {
-        Papa.parse(url, {
-          download: true,
-          header: true,
-          dynamicTyping: false,
-          skipEmptyLines: true,
-          preview: 0,
-          beforeFirstChunk: function (chunk) {
-            const lines = chunk.split(/\r\n|\n|\r/);
-            return lines.slice(12).join("\n");
-          },
-          complete: (results) => resolve(results.data || []),
-          error: (err) => reject(err),
-        });
-      });
-    }
-
-    // =========================================================
-    // 5) PLOTTING STATE
-    // =========================================================
-    let currentLayer = null;
-    let hazardLayer = null;
-    let trackLayer = null;
-    let groupsByType = {};
-    let allMarkers = [];
-    let legendControl = null;
-    let lastPoints = [];
-    let lastDataset = null;
-
-    let wildfireRows = null;
-    let tornadoRows = null;
-    let hurricaneRows = null;
-    let truckRows = null;
-
-    async function ensureExtraDataLoaded() {
-      if (!wildfireRows) {
-        wildfireRows = await readCsvObjectsFromUrl(WILDFIRE_EVENTS_CSV);
-        wildfireRows = wildfireRows
-          .map(r => ({ ...r, LATITUDE: parseFloat(r.LATITUDE), LONGITUDE: parseFloat(r.LONGITUDE) }))
-          .filter(r => isFinite(r.LATITUDE) && isFinite(r.LONGITUDE));
-      }
-
-      if (!tornadoRows) {
-        tornadoRows = await readCsvObjectsFromUrl(TORNADO_EVENTS_CSV);
-        tornadoRows = tornadoRows
-          .map(r => ({
-            ...r,
-            slat: parseFloat(r.slat),
-            slon: parseFloat(r.slon),
-            elat: parseFloat(r.elat),
-            elon: parseFloat(r.elon),
-            mag: Number(r.mag),
-            inj: Number(r.inj),
-            fat: Number(r.fat),
-            len: Number(r.len),
-            wid: Number(r.wid)
-          }))
-          .filter(r => String(r.st).toUpperCase() === "TX" && isFinite(r.slat) && isFinite(r.slon));
-      }
-
-      if (!hurricaneRows) {
-        hurricaneRows = await readCsvObjectsFromUrl(HURRICANE_EVENTS_CSV);
-        hurricaneRows = hurricaneRows
-          .map(r => ({
-            ...r,
-            "Geograpic Latitude": parseFloat(r["Geograpic Latitude"]),
-            "Geographic Longitude": parseFloat(r["Geographic Longitude"]),
-            "Maximum Sustained Wind (knots)": Number(r["Maximum Sustained Wind (knots)"]),
-            "Minimum Sea Level Pressure (millibars)": Number(r["Minimum Sea Level Pressure (millibars)"]),
-            "Calendar Year": Number(r["Calendar Year"]),
-            "max_sustained_wind_kt_nearby": Number(r["max_sustained_wind_kt_nearby"]),
-            "max_sustained_wind_mph_nearby": Number(r["max_sustained_wind_mph_nearby"])
-          }))
-          .filter(r => isFinite(r["Geograpic Latitude"]) && isFinite(r["Geographic Longitude"]));
-      }
-
-      if (!truckRows) {
-        truckRows = await readTruckCrashCsv(TRUCK_CRASH_EVENTS_CSV);
-        truckRows = truckRows
-          .map(r => ({
-            ...r,
-            "Latitude": parseFloat(r["Latitude"]),
-            "Longitude": parseFloat(r["Longitude"])
-          }))
-          .filter(r => r["Crash ID"] !== undefined && isFinite(r["Latitude"]) && isFinite(r["Longitude"]));
-      }
-    }
-
-    function getDisplayedPoints(points) {
-      const selected = typeFilter.value;
-      if (selected === "Top 20") {
-        return points.filter(p => p.r[INCIDENT_KEY] === "Top 20");
-      }
-      if (selected === "Top 50") {
-        return points.filter(p => p.r[INCIDENT_KEY] === "Top 20" || p.r[INCIDENT_KEY] === "Top 50");
-      }
-      if (selected === "Top 100") {
-        return points.filter(p =>
-          p.r[INCIDENT_KEY] === "Top 20" ||
-          p.r[INCIDENT_KEY] === "Top 50" ||
-          p.r[INCIDENT_KEY] === "Top 100"
-        );
-      }
-      return points;
-    }
-
-    async function drawHazardOverlays(points, dataset) {
-      if (hazardLayer) { map.removeLayer(hazardLayer); hazardLayer = null; }
-      if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
-
-      hazardToggleWrap.style.display = "none";
-      trackToggleWrap.style.display = "none";
-
-      if (!["wildfire", "tornado", "hurricane", "other-truck"].includes(dataset.id)) return;
-      await ensureExtraDataLoaded();
-
-      const displayedPoints = getDisplayedPoints(points);
-      if (!displayedPoints.length) return;
-
-      const hazardMarkers = [];
-      const extraTracks = [];
-
-      if (dataset.id === "wildfire") {
-        hazardToggleWrap.style.display = "inline-block";
-        trackToggleWrap.style.display = "inline-block";
-
-        const matchedWildfires = [];
-        for (const wf of wildfireRows) {
-          let nearestBridge = null;
-          let nearestDistance = Infinity;
-
-          for (const p of displayedPoints) {
-            const d = haversineMiles(p.lat, p.lon, wf.LATITUDE, wf.LONGITUDE);
-            if (d <= WILDFIRE_RADIUS_MILES && d < nearestDistance) {
-              nearestDistance = d;
-              nearestBridge = p;
+            if (nearestBridge) {
+              matchedWildfires.push({
+                wf,
+                nearestBridge,
+                nearestDistance
+              });
             }
           }
 
-          if (nearestBridge) {
-            matchedWildfires.push({
-              wf,
-              nearestBridge,
-              nearestDistance
+          if (hazardToggle.checked) {
+            matchedWildfires.forEach(item => {
+              hazardMarkers.push(
+                L.marker([item.wf.LATITUDE, item.wf.LONGITUDE], {
+                  icon: wildfireIcon(item.wf.FIRE_SIZE)
+                }).bindPopup(
+                  wildfirePopupHtml(item.wf, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
+                )
+              );
             });
           }
-        }
 
-        if (hazardToggle.checked) {
-          matchedWildfires.forEach(item => {
-            hazardMarkers.push(
-              L.marker([item.wf.LATITUDE, item.wf.LONGITUDE], {
-                icon: wildfireIcon(item.wf.FIRE_SIZE)
-              }).bindPopup(
-                wildfirePopupHtml(item.wf, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
-              )
-            );
-          });
-        }
-
-        if (trackToggle.checked) {
-          displayedPoints.forEach(p => {
-            extraTracks.push(
-              L.circle([p.lat, p.lon], {
-                radius: WILDFIRE_RADIUS_MILES * 1609.344,
-                color: "#cc5500",
-                weight: 1.2,
-                opacity: 0.9,
-                fillColor: "#ffb347",
-                fillOpacity: 0.08
-              })
-            );
-          });
-        }
-
-        if (matchedWildfires.length) {
-          status.textContent += `\nNearby wildfire incidents: ${matchedWildfires.length}`;
-        }
-      }
-
-      if (dataset.id === "tornado") {
-        hazardToggleWrap.style.display = "inline-block";
-        trackToggleWrap.style.display = "inline-block";
-
-        const matchedTornadoes = [];
-        for (const td of tornadoRows) {
-          let nearestBridge = null;
-          let nearestDistance = Infinity;
-
-          for (const p of displayedPoints) {
-            const d = haversineMiles(p.lat, p.lon, td.slat, td.slon);
-            if (d <= TORNADO_RADIUS_MILES && d < nearestDistance) {
-              nearestDistance = d;
-              nearestBridge = p;
-            }
-          }
-
-          if (nearestBridge) {
-            matchedTornadoes.push({
-              td,
-              nearestBridge,
-              nearestDistance
-            });
-          }
-        }
-
-        if (hazardToggle.checked) {
-          matchedTornadoes.forEach(item => {
-            hazardMarkers.push(
-              L.marker([item.td.slat, item.td.slon], {
-                icon: tornadoIcon(item.td.mag)
-              }).bindPopup(
-                tornadoPopupHtml(item.td, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
-              )
-            );
-          });
-        }
-
-        if (trackToggle.checked) {
-          matchedTornadoes
-            .filter(item =>
-              isFinite(item.td.elat) && isFinite(item.td.elon) &&
-              !(item.td.elat === 0 && item.td.elon === 0) &&
-              !(item.td.elat === item.td.slat && item.td.elon === item.td.slon)
-            )
-            .forEach(item => {
+          if (trackToggle.checked) {
+            displayedPoints.forEach(p => {
               extraTracks.push(
-                L.polyline([[item.td.slat, item.td.slon], [item.td.elat, item.td.elon]], {
-                  color: "#4b0082",
-                  weight: Math.max(2, Math.min(6, (Number(item.td.mag) || 0) + 1)),
-                  opacity: 0.65
+                L.circle([p.lat, p.lon], {
+                  radius: WILDFIRE_RADIUS_MILES * 1609.344,
+                  color: "#cc5500",
+                  weight: 1.2,
+                  opacity: 0.9,
+                  fillColor: "#ffb347",
+                  fillOpacity: 0.08
+                })
+              );
+            });
+          }
+
+          if (matchedWildfires.length) {
+            status.textContent += `\nNearby wildfire incidents: ${matchedWildfires.length}`;
+          }
+        }
+
+        if (dataset.id === "tornado") {
+          hazardToggleWrap.style.display = "inline-block";
+          trackToggleWrap.style.display = "inline-block";
+
+          const matchedTornadoes = [];
+          for (const td of tornadoRows) {
+            let nearestBridge = null;
+            let nearestDistance = Infinity;
+
+            for (const p of displayedPoints) {
+              const d = haversineMiles(p.lat, p.lon, td.slat, td.slon);
+              if (d <= TORNADO_RADIUS_MILES && d < nearestDistance) {
+                nearestDistance = d;
+                nearestBridge = p;
+              }
+            }
+
+            if (nearestBridge) {
+              matchedTornadoes.push({
+                td,
+                nearestBridge,
+                nearestDistance
+              });
+            }
+          }
+
+          if (hazardToggle.checked) {
+            matchedTornadoes.forEach(item => {
+              hazardMarkers.push(
+                L.marker([item.td.slat, item.td.slon], {
+                  icon: tornadoIcon(item.td.mag)
                 }).bindPopup(
                   tornadoPopupHtml(item.td, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
                 )
               );
             });
-        }
-
-        if (matchedTornadoes.length) {
-          status.textContent += `\nNearby tornado events: ${matchedTornadoes.length}`;
-        }
-      }
-
-      if (dataset.id === "hurricane") {
-        hazardToggleWrap.style.display = "inline-block";
-        trackToggleWrap.style.display = "inline-block";
-
-        const matchedHurricanes = [];
-        for (const hc of hurricaneRows) {
-          let nearestBridge = null;
-          let nearestDistance = Infinity;
-
-          for (const p of displayedPoints) {
-            const d = haversineMiles(p.lat, p.lon, hc["Geograpic Latitude"], hc["Geographic Longitude"]);
-            if (d <= HURRICANE_RADIUS_MILES && d < nearestDistance) {
-              nearestDistance = d;
-              nearestBridge = p;
-            }
           }
 
-          if (nearestBridge) {
-            matchedHurricanes.push({
-              hc,
-              nearestBridge,
-              nearestDistance
-            });
-          }
-        }
-
-        if (hazardToggle.checked) {
-          matchedHurricanes.forEach(item => {
-            hazardMarkers.push(
-              L.marker([item.hc["Geograpic Latitude"], item.hc["Geographic Longitude"]], {
-                icon: hurricaneIcon(
-                  item.hc["max_sustained_wind_mph_nearby"] ??
-                  (Number(item.hc["Maximum Sustained Wind (knots)"]) * 1.15078)
-                )
-              }).bindPopup(
-                hurricanePopupHtml(item.hc, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
+          if (trackToggle.checked) {
+            matchedTornadoes
+              .filter(item =>
+                isFinite(item.td.elat) && isFinite(item.td.elon) &&
+                !(item.td.elat === 0 && item.td.elon === 0) &&
+                !(item.td.elat === item.td.slat && item.td.elon === item.td.slon)
               )
-            );
-          });
-        }
-
-        if (trackToggle.checked) {
-          const grouped = {};
-          matchedHurricanes.forEach(item => {
-            const sid = item.hc["Storm Identifier"] || "UNKNOWN";
-            if (!grouped[sid]) grouped[sid] = [];
-            grouped[sid].push(item);
-          });
-
-          Object.values(grouped).forEach(arr => {
-            arr.sort((a, b) => new Date(a.hc["Observation Date"]) - new Date(b.hc["Observation Date"]));
-            const coords = arr.map(x => [x.hc["Geograpic Latitude"], x.hc["Geographic Longitude"]]);
-
-            const maxWindMphFromTrack = Math.max(
-              ...arr.map(x => Number(x.hc["max_sustained_wind_mph_nearby"])).filter(Number.isFinite),
-              ...arr.map(x => Number(x.hc["Maximum Sustained Wind (knots)"]) * 1.15078).filter(Number.isFinite),
-              0
-            );
-
-            const categoryInfo = getHurricaneCategoryFromMph(maxWindMphFromTrack);
-            const stormName = arr[0].hc["Storm Name"] || "Storm";
-
-            extraTracks.push(
-              L.polyline(coords, {
-                color: categoryInfo.color,
-                weight: categoryInfo.cat === "Category 5" ? 6 :
-                        categoryInfo.cat === "Category 4" ? 5 :
-                        categoryInfo.cat === "Category 3" ? 4.5 :
-                        categoryInfo.cat === "Category 2" ? 4 :
-                        categoryInfo.cat === "Category 1" ? 3.5 : 3,
-                opacity: 0.78
-              }).bindPopup(`
-                <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial;">
-                  <div style="font-weight:700; margin-bottom:6px;">Hurricane Track</div>
-                  <table>
-                    <tr><th>Storm Name</th><td>${stormName}</td></tr>
-                    <tr><th>Storm ID</th><td>${arr[0].hc["Storm Identifier"] || "NA"}</td></tr>
-                    <tr><th>Year</th><td>${arr[0].hc["Calendar Year"] || "NA"}</td></tr>
-                    <tr><th>Track points shown</th><td>${arr.length}</td></tr>
-                    <tr><th>Max nearby wind</th><td>${isFinite(maxWindMphFromTrack) ? maxWindMphFromTrack.toFixed(1) : "NA"} mph</td></tr>
-                    <tr><th>Category</th><td>${categoryInfo.cat}</td></tr>
-                    <tr><th>Damage Level</th><td>${categoryInfo.damage}</td></tr>
-                  </table>
-                </div>
-              `)
-            );
-          });
-        }
-
-        if (matchedHurricanes.length) {
-          status.textContent += `\nNearby hurricane observations: ${matchedHurricanes.length}`;
-        }
-      }
-
-      if (dataset.id === "other-truck") {
-        hazardToggleWrap.style.display = "inline-block";
-        trackToggleWrap.style.display = "inline-block";
-
-        const matchedCrashes = [];
-        for (const cr of truckRows) {
-          let nearestBridge = null;
-          let nearestDistance = Infinity;
-
-          for (const p of displayedPoints) {
-            const d = haversineMiles(p.lat, p.lon, cr["Latitude"], cr["Longitude"]);
-            if (d <= TRUCK_RADIUS_MILES && d < nearestDistance) {
-              nearestDistance = d;
-              nearestBridge = p;
-            }
+              .forEach(item => {
+                extraTracks.push(
+                  L.polyline([[item.td.slat, item.td.slon], [item.td.elat, item.td.elon]], {
+                    color: "#4b0082",
+                    weight: Math.max(2, Math.min(6, (Number(item.td.mag) || 0) + 1)),
+                    opacity: 0.65
+                  }).bindPopup(
+                    tornadoPopupHtml(item.td, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
+                  )
+                );
+              });
           }
 
-          if (nearestBridge) {
-            matchedCrashes.push({
-              cr,
-              nearestBridge,
-              nearestDistance
-            });
+          if (matchedTornadoes.length) {
+            status.textContent += `\nNearby tornado events: ${matchedTornadoes.length}`;
           }
-        }
-
-        if (hazardToggle.checked) {
-          matchedCrashes.forEach(item => {
-            hazardMarkers.push(
-              L.marker([item.cr["Latitude"], item.cr["Longitude"]], {
-                icon: truckIcon(item.cr["Crash Severity"])
-              }).bindPopup(
-                truckPopupHtml(item.cr, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${(item.nearestDistance * 1609.344).toFixed(1)} m)`)
-              )
-            );
-          });
-        }
-
-        if (trackToggle.checked) {
-          matchedCrashes.forEach(item => {
-            extraTracks.push(
-              L.polyline(
-                [[item.nearestBridge.lat, item.nearestBridge.lon], [item.cr["Latitude"], item.cr["Longitude"]]],
-                {
-                  color: "#2f4f4f",
-                  weight: 1.8,
-                  opacity: 0.55,
-                  dashArray: "4,4"
-                }
-              ).bindPopup(
-                truckPopupHtml(item.cr, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${(item.nearestDistance * 1609.344).toFixed(1)} m)`)
-              )
-            );
-          });
-        }
-
-        if (matchedCrashes.length) {
-          status.textContent += `\nNearby truck-related crashes: ${matchedCrashes.length}`;
-        }
-      }
-
-      if (hazardMarkers.length) {
-        hazardLayer = L.featureGroup(hazardMarkers).addTo(map);
-      }
-      if (extraTracks.length) {
-        trackLayer = L.featureGroup(extraTracks).addTo(map);
-      }
-    }
-
-    async function plotFromRows(rows, dataset) {
-      const RISK_INDEX_COL = dataset.riskIndexCol;
-
-      if (!rows.length) throw new Error("No rows found in CSV.");
-
-      const sorted = [...rows].sort((a, b) => {
-        const va = Number(a[RISK_INDEX_COL]);
-        const vb = Number(b[RISK_INDEX_COL]);
-        if (!isFinite(va) && !isFinite(vb)) return 0;
-        if (!isFinite(va)) return 1;
-        if (!isFinite(vb)) return -1;
-        return vb - va;
-      });
-
-      sorted.forEach((r, idx) => {
-        const rank = idx + 1;
-        if (rank <= 20) r[INCIDENT_KEY] = "Top 20";
-        else if (rank <= 50) r[INCIDENT_KEY] = "Top 50";
-        else if (rank <= 100) r[INCIDENT_KEY] = "Top 100";
-        else r[INCIDENT_KEY] = "All Bridges";
-      });
-
-      const sample = sorted[0] || {};
-      const keys = Object.keys(sample);
-
-      const latKey = keyLookupFromKeys(keys, [/^lat(i(tude)?)?$/i, /^lat_?dd$/i, /^lat_?\d+/i, /^lat/i]);
-      const lonKey = keyLookupFromKeys(keys, [/^(lon(g(itude)?)?|lng)$/i, /^lon_?dd$/i, /^long_?\d+/i, /^lon/i, /^long/i]);
-      const coordKey = keyLookupFromKeys(keys, [/^coordinates?\s*\(\s*lat\s*,\s*lon\s*\)$/i, /^coordinates$/i, /^coords$/i]);
-
-      if (!((latKey && lonKey) || coordKey)) {
-        throw new Error('Could not find latitude/longitude columns or a "coordinates (lat, lon)" column.');
-      }
-
-      const points = [];
-      for (const r of sorted) {
-        let lat, lon;
-
-        if (coordKey) {
-          const pair = parseCoordsField(r[coordKey]);
-          if (!pair) continue;
-          ({ lat, lon } = pair);
-        } else {
-          lat = parseFloat(r[latKey]);
-          lon = parseFloat(r[lonKey]);
-        }
-
-        if (!isFinite(lat) || !isFinite(lon)) continue;
-        if (looksSwapped(lon, lat)) { const t = lat; lat = lon; lon = t; }
-
-        points.push({ r, lat, lon });
-      }
-      if (!points.length) throw new Error("No valid coordinates parsed from CSV.");
-
-      if (currentLayer) { map.removeLayer(currentLayer); currentLayer = null; }
-      if (hazardLayer) { map.removeLayer(hazardLayer); hazardLayer = null; }
-      if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
-      if (legendControl) { map.removeControl(legendControl); legendControl = null; }
-
-      groupsByType = { "Top 20": [], "Top 50": [], "Top 100": [], "__ALL__": [] };
-      allMarkers = [];
-      lastPoints = points;
-      lastDataset = dataset;
-
-      const colors = colorMapFor();
-
-      for (const p of points) {
-        const lvl = p.r?.[INCIDENT_KEY];
-        const riskVal = p.r?.[RISK_INDEX_COL];
-
-        const isTop = (lvl === "Top 20" || lvl === "Top 50" || lvl === "Top 100");
-        const fill = isTop ? (colors[lvl] || "#666") : "#777";
-
-        const marker = L.circleMarker([p.lat, p.lon], {
-          radius: markerRadiusFromRisk(riskVal, dataset.id),
-          fillColor: fill,
-          color: "#333",
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.9,
-        }).bindPopup(makePopup(p.r));   // unchanged bridge popup
-
-        allMarkers.push(marker);
-        groupsByType["__ALL__"].push(marker);
-
-        if (lvl === "Top 20") {
-          groupsByType["Top 20"].push(marker);
-          groupsByType["Top 50"].push(marker);
-          groupsByType["Top 100"].push(marker);
-        } else if (lvl === "Top 50") {
-          groupsByType["Top 50"].push(marker);
-          groupsByType["Top 100"].push(marker);
-        } else if (lvl === "Top 100") {
-          groupsByType["Top 100"].push(marker);
-        }
-      }
-
-      typeFilter.value = "Top 20";
-      currentLayer = L.featureGroup(groupsByType["Top 20"]).addTo(map);
-
-      const b = currentLayer.getBounds();
-      if (b.isValid()) map.fitBounds(b.pad(0.1));
-
-      const typeValues = ["Top 20", "Top 50", "Top 100"];
-      legendControl = L.control({ position: "topright" });
-      legendControl.onAdd = function () {
-        const div = L.DomUtil.create("div", "legend");
-        const h = document.createElement("div");
-        h.textContent = `${dataset.name} (Top Filters)`;
-        h.style.fontWeight = "600";
-        h.style.marginBottom = "6px";
-        div.appendChild(h);
-
-        for (const lvl of typeValues) {
-          const row = document.createElement("div"); row.className = "row";
-          const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = colors[lvl];
-          const lab = document.createElement("span"); lab.textContent = lvl;
-          row.appendChild(sw); row.appendChild(lab);
-          div.appendChild(row);
-        }
-
-        if (dataset.id === "wildfire") {
-          const row1 = document.createElement("div"); row1.className = "row";
-          row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">🔥</span><span>Nearby wildfire incident</span>`;
-          div.appendChild(row1);
-
-          const row2 = document.createElement("div"); row2.className = "row";
-          row2.innerHTML = `<span style="width:14px;height:14px;border:1px solid #cc5500;background:rgba(255,179,71,0.15);border-radius:50%;display:inline-block;margin-right:8px;"></span><span>1-mile bridge buffer</span>`;
-          div.appendChild(row2);
-        }
-
-        if (dataset.id === "tornado") {
-          const row1 = document.createElement("div"); row1.className = "row";
-          row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">🌪️</span><span>Texas tornado start point</span>`;
-          div.appendChild(row1);
-
-          const row2 = document.createElement("div"); row2.className = "row";
-          row2.innerHTML = `<span style="width:18px;height:4px;background:#4b0082;display:inline-block;margin-right:8px;border-radius:2px;"></span><span>Tornado path</span>`;
-          div.appendChild(row2);
         }
 
         if (dataset.id === "hurricane") {
-          const items = [
-            ["🌀", "Storm observation point"],
-            ["#fdd835", "Category 1 — Very Dangerous"],
-            ["#fb8c00", "Category 2 — Extremely Dangerous"],
-            ["#f4511e", "Category 3 — Devastating"],
-            ["#d81b60", "Category 4 — Catastrophic"],
-            ["#6a1b9a", "Category 5 — Total Destruction"]
-          ];
+          hazardToggleWrap.style.display = "inline-block";
+          trackToggleWrap.style.display = "inline-block";
 
-          items.forEach((it, idx) => {
-            const row = document.createElement("div");
-            row.className = "row";
-            if (idx === 0) {
-              row.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">${it[0]}</span><span>${it[1]}</span>`;
-            } else {
-              row.innerHTML = `<span style="width:18px;height:4px;background:${it[0]};display:inline-block;margin-right:8px;border-radius:2px;"></span><span>${it[1]}</span>`;
+          const matchedHurricanes = [];
+          for (const hc of hurricaneRows) {
+            let nearestBridge = null;
+            let nearestDistance = Infinity;
+
+            for (const p of displayedPoints) {
+              const d = haversineMiles(p.lat, p.lon, hc["Geograpic Latitude"], hc["Geographic Longitude"]);
+              if (d <= HURRICANE_RADIUS_MILES && d < nearestDistance) {
+                nearestDistance = d;
+                nearestBridge = p;
+              }
             }
-            div.appendChild(row);
-          });
+
+            if (nearestBridge) {
+              matchedHurricanes.push({
+                hc,
+                nearestBridge,
+                nearestDistance
+              });
+            }
+          }
+
+          if (hazardToggle.checked) {
+            matchedHurricanes.forEach(item => {
+              hazardMarkers.push(
+                L.marker([item.hc["Geograpic Latitude"], item.hc["Geographic Longitude"]], {
+                  icon: hurricaneIcon(
+                    item.hc["max_sustained_wind_mph_nearby"] ??
+                    (Number(item.hc["Maximum Sustained Wind (knots)"]) * 1.15078)
+                  )
+                }).bindPopup(
+                  hurricanePopupHtml(item.hc, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${item.nearestDistance.toFixed(2)} mi)`)
+                )
+              );
+            });
+          }
+
+          if (trackToggle.checked) {
+            const grouped = {};
+            matchedHurricanes.forEach(item => {
+              const sid = item.hc["Storm Identifier"] || "UNKNOWN";
+              if (!grouped[sid]) grouped[sid] = [];
+              grouped[sid].push(item);
+            });
+
+            Object.values(grouped).forEach(arr => {
+              arr.sort((a, b) => new Date(a.hc["Observation Date"]) - new Date(b.hc["Observation Date"]));
+              const coords = arr.map(x => [x.hc["Geograpic Latitude"], x.hc["Geographic Longitude"]]);
+
+              const maxWindMphFromTrack = Math.max(
+                ...arr.map(x => Number(x.hc["max_sustained_wind_mph_nearby"])).filter(Number.isFinite),
+                ...arr.map(x => Number(x.hc["Maximum Sustained Wind (knots)"]) * 1.15078).filter(Number.isFinite),
+                0
+              );
+
+              const categoryInfo = getHurricaneCategoryFromMph(maxWindMphFromTrack);
+              const stormName = arr[0].hc["Storm Name"] || "Storm";
+
+              extraTracks.push(
+                L.polyline(coords, {
+                  color: categoryInfo.color,
+                  weight: categoryInfo.cat === "Category 5" ? 6 :
+                          categoryInfo.cat === "Category 4" ? 5 :
+                          categoryInfo.cat === "Category 3" ? 4.5 :
+                          categoryInfo.cat === "Category 2" ? 4 :
+                          categoryInfo.cat === "Category 1" ? 3.5 : 3,
+                  opacity: 0.78
+                }).bindPopup(`
+                  <div style="font:13px/1.35 system-ui,Segoe UI,Roboto,Arial;">
+                    <div style="font-weight:700; margin-bottom:6px;">Hurricane Track</div>
+                    <table>
+                      <tr><th>Storm Name</th><td>${stormName}</td></tr>
+                      <tr><th>Storm ID</th><td>${arr[0].hc["Storm Identifier"] || "NA"}</td></tr>
+                      <tr><th>Year</th><td>${arr[0].hc["Calendar Year"] || "NA"}</td></tr>
+                      <tr><th>Track points shown</th><td>${arr.length}</td></tr>
+                      <tr><th>Max nearby wind</th><td>${isFinite(maxWindMphFromTrack) ? maxWindMphFromTrack.toFixed(1) : "NA"} mph</td></tr>
+                      <tr><th>Category</th><td>${categoryInfo.cat}</td></tr>
+                      <tr><th>Damage Level</th><td>${categoryInfo.damage}</td></tr>
+                    </table>
+                  </div>
+                `)
+              );
+            });
+          }
+
+          if (matchedHurricanes.length) {
+            status.textContent += `\nNearby hurricane observations: ${matchedHurricanes.length}`;
+          }
         }
 
         if (dataset.id === "other-truck") {
-          const row1 = document.createElement("div"); row1.className = "row";
-          row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">⚠️</span><span>Nearby truck-related crash</span>`;
-          div.appendChild(row1);
+          hazardToggleWrap.style.display = "inline-block";
+          trackToggleWrap.style.display = "inline-block";
 
-          const row2 = document.createElement("div"); row2.className = "row";
-          row2.innerHTML = `<span style="width:18px;height:3px;background:#2f4f4f;display:inline-block;margin-right:8px;border-radius:2px;"></span><span>Bridge-crash link</span>`;
-          div.appendChild(row2);
+          const matchedCrashes = [];
+          for (const cr of truckRows) {
+            let nearestBridge = null;
+            let nearestDistance = Infinity;
+
+            for (const p of displayedPoints) {
+              const d = haversineMiles(p.lat, p.lon, cr["Latitude"], cr["Longitude"]);
+              if (d <= TRUCK_RADIUS_MILES && d < nearestDistance) {
+                nearestDistance = d;
+                nearestBridge = p;
+              }
+            }
+
+            if (nearestBridge) {
+              matchedCrashes.push({
+                cr,
+                nearestBridge,
+                nearestDistance
+              });
+            }
+          }
+
+          if (hazardToggle.checked) {
+            matchedCrashes.forEach(item => {
+              hazardMarkers.push(
+                L.marker([item.cr["Latitude"], item.cr["Longitude"]], {
+                  icon: truckIcon(item.cr["Crash Severity"])
+                }).bindPopup(
+                  truckPopupHtml(item.cr, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${(item.nearestDistance * 1609.344).toFixed(1)} m)`)
+                )
+              );
+            });
+          }
+
+          if (trackToggle.checked) {
+            matchedCrashes.forEach(item => {
+              extraTracks.push(
+                L.polyline(
+                  [[item.nearestBridge.lat, item.nearestBridge.lon], [item.cr["Latitude"], item.cr["Longitude"]]],
+                  {
+                    color: "#2f4f4f",
+                    weight: 1.8,
+                    opacity: 0.55,
+                    dashArray: "4,4"
+                  }
+                ).bindPopup(
+                  truckPopupHtml(item.cr, `${item.nearestBridge.r.STRUCTURE_NUMBER_008 || "Bridge"} (${(item.nearestDistance * 1609.344).toFixed(1)} m)`)
+                )
+              );
+            });
+          }
+
+          if (matchedCrashes.length) {
+            status.textContent += `\nNearby truck-related crashes: ${matchedCrashes.length}`;
+          }
         }
 
-        return div;
-      };
-      legendControl.addTo(map);
+        if (hazardMarkers.length) {
+          hazardLayer = L.featureGroup(hazardMarkers).addTo(map);
+        }
+        if (extraTracks.length) {
+          trackLayer = L.featureGroup(extraTracks).addTo(map);
+        }
+      }
 
-      status.textContent =
-        `Dataset: ${dataset.name}\n` +
-        `File: ${dataset.csvUrl}\n` +
-        `Showing: Top 20\n` +
-        `Points: ${groupsByType["Top 20"].length}\n` +
-        `Marker size is FIXED (same for all).`;
+      async function plotFromRows(rows, dataset) {
+        const RISK_INDEX_COL = dataset.riskIndexCol;
 
-      await drawHazardOverlays(points, dataset);
+        if (!rows.length) throw new Error("No rows found in CSV.");
 
-      typeFilter.onchange = async () => {
-        if (currentLayer) map.removeLayer(currentLayer);
+        const sorted = [...rows].sort((a, b) => {
+          const va = Number(a[RISK_INDEX_COL]);
+          const vb = Number(b[RISK_INDEX_COL]);
+          if (!isFinite(va) && !isFinite(vb)) return 0;
+          if (!isFinite(va)) return 1;
+          if (!isFinite(vb)) return -1;
+          return vb - va;
+        });
 
-        let markersToShow = [];
-        if (typeFilter.value === "__ALL__") markersToShow = groupsByType["__ALL__"];
-        else markersToShow = groupsByType[typeFilter.value] || [];
+        sorted.forEach((r, idx) => {
+          const rank = idx + 1;
+          if (rank <= 20) r[INCIDENT_KEY] = "Top 20";
+          else if (rank <= 50) r[INCIDENT_KEY] = "Top 50";
+          else if (rank <= 100) r[INCIDENT_KEY] = "Top 100";
+          else r[INCIDENT_KEY] = "All Bridges";
+        });
 
-        currentLayer = L.featureGroup(markersToShow).addTo(map);
-        const bb = currentLayer.getBounds();
-        if (bb.isValid()) map.fitBounds(bb.pad(0.1));
+        const sample = sorted[0] || {};
+        const keys = Object.keys(sample);
 
-        const label = (typeFilter.value === "__ALL__") ? "All bridges" : typeFilter.value;
+        const latKey = keyLookupFromKeys(keys, [/^lat(i(tude)?)?$/i, /^lat_?dd$/i, /^lat_?\d+/i, /^lat/i]);
+        const lonKey = keyLookupFromKeys(keys, [/^(lon(g(itude)?)?|lng)$/i, /^lon_?dd$/i, /^long_?\d+/i, /^lon/i, /^long/i]);
+        const coordKey = keyLookupFromKeys(keys, [/^coordinates?\s*\(\s*lat\s*,\s*lon\s*\)$/i, /^coordinates$/i, /^coords$/i]);
+
+        if (!((latKey && lonKey) || coordKey)) {
+          throw new Error('Could not find latitude/longitude columns or a "coordinates (lat, lon)" column.');
+        }
+
+        const points = [];
+        for (const r of sorted) {
+          let lat, lon;
+
+          if (coordKey) {
+            const pair = parseCoordsField(r[coordKey]);
+            if (!pair) continue;
+            ({ lat, lon } = pair);
+          } else {
+            lat = parseFloat(r[latKey]);
+            lon = parseFloat(r[lonKey]);
+          }
+
+          if (!isFinite(lat) || !isFinite(lon)) continue;
+          if (looksSwapped(lon, lat)) { const t = lat; lat = lon; lon = t; }
+
+          points.push({ r, lat, lon });
+        }
+        if (!points.length) throw new Error("No valid coordinates parsed from CSV.");
+
+        if (currentLayer) { map.removeLayer(currentLayer); currentLayer = null; }
+        if (hazardLayer) { map.removeLayer(hazardLayer); hazardLayer = null; }
+        if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
+        if (legendControl) { map.removeControl(legendControl); legendControl = null; }
+
+        groupsByType = { "Top 20": [], "Top 50": [], "Top 100": [], "__ALL__": [] };
+        allMarkers = [];
+        lastPoints = points;
+        lastDataset = dataset;
+
+        const colors = colorMapFor();
+
+        for (const p of points) {
+          const lvl = p.r?.[INCIDENT_KEY];
+          const riskVal = p.r?.[RISK_INDEX_COL];
+
+          const isTop = (lvl === "Top 20" || lvl === "Top 50" || lvl === "Top 100");
+          const fill = isTop ? (colors[lvl] || "#666") : "#777";
+
+          const marker = L.circleMarker([p.lat, p.lon], {
+            radius: markerRadiusFromRisk(riskVal, dataset.id),
+            fillColor: fill,
+            color: "#333",
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.9,
+          }).bindPopup(makePopup(p.r));   // unchanged bridge popup
+
+          allMarkers.push(marker);
+          groupsByType["__ALL__"].push(marker);
+
+          if (lvl === "Top 20") {
+            groupsByType["Top 20"].push(marker);
+            groupsByType["Top 50"].push(marker);
+            groupsByType["Top 100"].push(marker);
+          } else if (lvl === "Top 50") {
+            groupsByType["Top 50"].push(marker);
+            groupsByType["Top 100"].push(marker);
+          } else if (lvl === "Top 100") {
+            groupsByType["Top 100"].push(marker);
+          }
+        }
+
+        typeFilter.value = "Top 20";
+        currentLayer = L.featureGroup(groupsByType["Top 20"]).addTo(map);
+
+        const b = currentLayer.getBounds();
+        if (b.isValid()) map.fitBounds(b.pad(0.1));
+
+        const typeValues = ["Top 20", "Top 50", "Top 100"];
+        legendControl = L.control({ position: "topright" });
+        legendControl.onAdd = function () {
+          const div = L.DomUtil.create("div", "legend");
+          const h = document.createElement("div");
+          h.textContent = `${dataset.name} (Top Filters)`;
+          h.style.fontWeight = "600";
+          h.style.marginBottom = "6px";
+          div.appendChild(h);
+
+          for (const lvl of typeValues) {
+            const row = document.createElement("div"); row.className = "row";
+            const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = colors[lvl];
+            const lab = document.createElement("span"); lab.textContent = lvl;
+            row.appendChild(sw); row.appendChild(lab);
+            div.appendChild(row);
+          }
+
+          if (dataset.id === "wildfire") {
+            const row1 = document.createElement("div"); row1.className = "row";
+            row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">🔥</span><span>Nearby wildfire incident</span>`;
+            div.appendChild(row1);
+
+            const row2 = document.createElement("div"); row2.className = "row";
+            row2.innerHTML = `<span style="width:14px;height:14px;border:1px solid #cc5500;background:rgba(255,179,71,0.15);border-radius:50%;display:inline-block;margin-right:8px;"></span><span>1-mile bridge buffer</span>`;
+            div.appendChild(row2);
+          }
+
+          if (dataset.id === "tornado") {
+            const row1 = document.createElement("div"); row1.className = "row";
+            row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">🌪️</span><span>Texas tornado start point</span>`;
+            div.appendChild(row1);
+
+            const row2 = document.createElement("div"); row2.className = "row";
+            row2.innerHTML = `<span style="width:18px;height:4px;background:#4b0082;display:inline-block;margin-right:8px;border-radius:2px;"></span><span>Tornado path</span>`;
+            div.appendChild(row2);
+          }
+
+          if (dataset.id === "hurricane") {
+            const items = [
+              ["🌀", "Storm observation point"],
+              ["#fdd835", "Category 1 — Very Dangerous"],
+              ["#fb8c00", "Category 2 — Extremely Dangerous"],
+              ["#f4511e", "Category 3 — Devastating"],
+              ["#d81b60", "Category 4 — Catastrophic"],
+              ["#6a1b9a", "Category 5 — Total Destruction"]
+            ];
+
+            items.forEach((it, idx) => {
+              const row = document.createElement("div");
+              row.className = "row";
+              if (idx === 0) {
+                row.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">${it[0]}</span><span>${it[1]}</span>`;
+              } else {
+                row.innerHTML = `<span style="width:18px;height:4px;background:${it[0]};display:inline-block;margin-right:8px;border-radius:2px;"></span><span>${it[1]}</span>`;
+              }
+              div.appendChild(row);
+            });
+          }
+
+          if (dataset.id === "other-truck") {
+            const row1 = document.createElement("div"); row1.className = "row";
+            row1.innerHTML = `<span style="width:18px;display:inline-block;text-align:center;margin-right:8px;">⚠️</span><span>Nearby truck-related crash</span>`;
+            div.appendChild(row1);
+
+            const row2 = document.createElement("div"); row2.className = "row";
+            row2.innerHTML = `<span style="width:18px;height:3px;background:#2f4f4f;display:inline-block;margin-right:8px;border-radius:2px;"></span><span>Bridge-crash link</span>`;
+            div.appendChild(row2);
+          }
+
+          return div;
+        };
+        legendControl.addTo(map);
+
         status.textContent =
           `Dataset: ${dataset.name}\n` +
           `File: ${dataset.csvUrl}\n` +
-          `Showing: ${label}\n` +
-          `Points: ${markersToShow.length}\n` +
+          `Showing: Top 20\n` +
+          `Points: ${groupsByType["Top 20"].length}\n` +
           `Marker size is FIXED (same for all).`;
 
-        await drawHazardOverlays(lastPoints, lastDataset);
-      };
-    }
+        await drawHazardOverlays(points, dataset);
 
-    hazardToggle.addEventListener("change", async () => {
-      if (lastPoints.length && lastDataset) {
-        await drawHazardOverlays(lastPoints, lastDataset);
+        typeFilter.onchange = async () => {
+          if (currentLayer) map.removeLayer(currentLayer);
+
+          let markersToShow = [];
+          if (typeFilter.value === "__ALL__") markersToShow = groupsByType["__ALL__"];
+          else markersToShow = groupsByType[typeFilter.value] || [];
+
+          currentLayer = L.featureGroup(markersToShow).addTo(map);
+          const bb = currentLayer.getBounds();
+          if (bb.isValid()) map.fitBounds(bb.pad(0.1));
+
+          const label = (typeFilter.value === "__ALL__") ? "All bridges" : typeFilter.value;
+          status.textContent =
+            `Dataset: ${dataset.name}\n` +
+            `File: ${dataset.csvUrl}\n` +
+            `Showing: ${label}\n` +
+            `Points: ${markersToShow.length}\n` +
+            `Marker size is FIXED (same for all).`;
+
+          await drawHazardOverlays(lastPoints, lastDataset);
+        };
       }
-    });
 
-    trackToggle.addEventListener("change", async () => {
-      if (lastPoints.length && lastDataset) {
-        await drawHazardOverlays(lastPoints, lastDataset);
+      hazardToggle.addEventListener("change", async () => {
+        if (lastPoints.length && lastDataset) {
+          await drawHazardOverlays(lastPoints, lastDataset);
+        }
+      });
+
+      trackToggle.addEventListener("change", async () => {
+        if (lastPoints.length && lastDataset) {
+          await drawHazardOverlays(lastPoints, lastDataset);
+        }
+      });
+
+      // =========================================================
+      // 6) BOOTSTRAP / RELOAD
+      // =========================================================
+      function getSelectedDataset() {
+        const id = riskDataset.value;
+        return DATASETS.find(d => d.id === id) || DATASETS[0];
       }
-    });
 
-    // =========================================================
-    // 6) BOOTSTRAP / RELOAD
-    // =========================================================
-    function getSelectedDataset() {
-      const id = riskDataset.value;
-      return DATASETS.find(d => d.id === id) || DATASETS[0];
-    }
-
-    async function loadAndPlot() {
-      try {
-        const ds = getSelectedDataset();
-        status.textContent = `Fetching ${ds.csvUrl}…\nDataset: ${ds.name}`;
-        const rows = await readCsvObjectsFromUrl(ds.csvUrl);
-        await plotFromRows(rows, ds);
-      } catch (err) {
-        console.error(err);
-        status.textContent =
-          `Error: ${err.message}\n\nTips:\n` +
-          `• Put ALL CSV files in the SAME folder as this HTML.\n` +
-          `• If opening by double-click fails (CORS), run a local server:\n` +
-          `  - VS Code Live Server OR\n` +
-          `  - python -m http.server\n`;
+      async function loadAndPlot() {
+        try {
+          const ds = getSelectedDataset();
+          status.textContent = `Fetching ${ds.csvUrl}…\nDataset: ${ds.name}`;
+          const rows = await readCsvObjectsFromUrl(ds.csvUrl);
+          await plotFromRows(rows, ds);
+        } catch (err) {
+          console.error(err);
+          status.textContent =
+            `Error: ${err.message}\n\nTips:\n` +
+            `• Put ALL CSV files in the SAME folder as this HTML.\n` +
+            `• If opening by double-click fails (CORS), run a local server:\n` +
+            `  - VS Code Live Server OR\n` +
+            `  - python -m http.server\n`;
+        }
       }
-    }
 
-    reloadBtn.addEventListener("click", loadAndPlot);
-    riskDataset.addEventListener("change", loadAndPlot);
-    window.addEventListener("DOMContentLoaded", loadAndPlot);
+      reloadBtn.addEventListener("click", loadAndPlot);
+      riskDataset.addEventListener("change", loadAndPlot);
+      loadAndPlot();
+    }
   </script>
 </body>
 </html>
